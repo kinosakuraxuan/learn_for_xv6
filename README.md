@@ -30,6 +30,7 @@ make grade
 ## 实验报告
 
 - [实验一：Unix Utilities](reports/lab1.md)
+- [实验二：System Calls](reports/lab2.md)
 
 ## 上游项目
 
