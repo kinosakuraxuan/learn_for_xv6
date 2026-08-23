@@ -1,0 +1,21 @@
+1. Speeding up system calls
+
+Besides getpid(), a read-only call such as uptime() could use the same idea.
+The kernel could publish the current tick count in a user-readable page and
+update it on timer interrupts. Calls that copy kernel-maintained, non-secret
+read-only data are suitable; calls that change state or require permission
+checks still need to enter the kernel.
+
+2. Page-table printout
+
+The output has the same three-level tree shape as the Sv39 page table in
+Figure 3-4. Entries with no R/W/X bits are internal nodes whose physical
+address points to the next-level page table. Entries with any R/W/X bit are
+leaf mappings whose physical address points to the mapped page.
+
+For the initial process, virtual page 0 holds the program text and data. The
+next low page is the stack guard page: it remains mapped for the kernel but
+PTE_U is cleared, so user mode cannot read or write it. The following low page
+is the user stack. At the top of the address space, the third-to-last mapping
+is USYSCALL (user-readable and not writable), followed by TRAPFRAME
+(supervisor-only read/write) and TRAMPOLINE (supervisor-only read/execute).
