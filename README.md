@@ -8,14 +8,15 @@
 | --- | --- | --- |
 | `util` | Lab 1：Unix Utilities | `100/100` |
 | `syscall` | Lab 2：System Calls | `35/35` |
+| `pgtbl` | Lab 3：Page Tables | `46/46` |
 
 ## 切换与运行
 
 ```bash
 git fetch origin
 git checkout util       # 实验一
-# 或
 git checkout syscall    # 实验二
+git checkout pgtbl      # 实验三
 
 make clean
 make qemu
