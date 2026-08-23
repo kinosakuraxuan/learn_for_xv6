@@ -180,6 +180,10 @@ UPROGS=\
 	$U/_cat\
 	$U/_echo\
         $U/_sleep\
+	$U/_pingpong\
+	$U/_primes\
+	$U/_find\
+	$U/_xargs\
 	$U/_forktest\
 	$U/_grep\
 	$U/_init\
