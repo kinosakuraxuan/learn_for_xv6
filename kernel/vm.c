@@ -303,7 +303,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -312,19 +311,53 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+    if(flags & PTE_W){
+      flags = (flags & ~PTE_W) | PTE_COW;
+      *pte = PA2PTE(pa) | flags;
     }
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
+      goto err;
+    krefinc(pa);
   }
   return 0;
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+// Resolve a write to a copy-on-write user page.
+int
+cowalloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  if(va >= MAXVA)
+    return -1;
+  va = PGROUNDDOWN(va);
+  pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & (PTE_V | PTE_U | PTE_COW)) !=
+                 (PTE_V | PTE_U | PTE_COW))
+    return -1;
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+  if(krefcount(pa) == 1){
+    *pte = PA2PTE(pa) | ((flags | PTE_W) & ~PTE_COW);
+    sfence_vma();
+    return 0;
+  }
+
+  if((mem = kalloc()) == 0)
+    return -1;
+  memmove(mem, (char*)pa, PGSIZE);
+  *pte = PA2PTE((uint64)mem) | ((flags | PTE_W) & ~PTE_COW);
+  sfence_vma();
+  kfree((void*)pa);
+  return 0;
 }
 
 // mark a PTE invalid for user access.
@@ -350,6 +383,11 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(va0 >= MAXVA)
+      return -1;
+    pte_t *pte = walk(pagetable, va0, 0);
+    if(pte && (*pte & PTE_COW) && cowalloc(pagetable, va0) < 0)
+      return -1;
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
