@@ -6,6 +6,7 @@
 
 #include "types.h"
 #include "riscv.h"
+#include "memlayout.h"
 #include "defs.h"
 #include "param.h"
 #include "stat.h"
@@ -113,6 +114,117 @@ sys_fstat(void)
   if(argfd(0, 0, &f) < 0 || argaddr(1, &st) < 0)
     return -1;
   return filestat(f, st);
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 hint;
+  int length, prot, flags, offset;
+  struct file *f;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &hint) < 0 || argint(1, &length) < 0 ||
+     argint(2, &prot) < 0 || argint(3, &flags) < 0 ||
+     argfd(4, 0, &f) < 0 || argint(5, &offset) < 0)
+    return -1;
+  (void)hint;
+  if(length <= 0 || offset < 0 || offset % PGSIZE != 0)
+    return -1;
+  if(flags != MAP_SHARED && flags != MAP_PRIVATE)
+    return -1;
+  if(f->type != FD_INODE || !f->readable)
+    return -1;
+  if(flags == MAP_SHARED && (prot & PROT_WRITE) && !f->writable)
+    return -1;
+
+  struct vma *v = 0;
+  for(int i = 0; i < NVMA; i++){
+    if(!p->vma[i].used){
+      v = &p->vma[i];
+      break;
+    }
+  }
+  if(v == 0)
+    return -1;
+
+  uint64 n = PGROUNDUP((uint64)length);
+  uint64 addr = PGROUNDUP(p->mmap_end);
+  if(addr < MMAPBASE || addr + n < addr || addr + n >= TRAPFRAME)
+    return -1;
+
+  v->used = 1;
+  v->addr = addr;
+  v->length = n;
+  v->prot = prot;
+  v->flags = flags;
+  v->file = filedup(f);
+  v->offset = offset;
+  p->mmap_end = addr + n;
+  return addr;
+}
+
+int
+vmaunmap(struct proc *p, uint64 addr, uint64 length)
+{
+  if(length == 0 || addr % PGSIZE != 0 || length % PGSIZE != 0)
+    return -1;
+
+  struct vma *v = 0;
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].used && addr >= p->vma[i].addr &&
+       addr + length >= addr && addr + length <= p->vma[i].addr + p->vma[i].length){
+      v = &p->vma[i];
+      break;
+    }
+  }
+  if(v == 0)
+    return -1;
+
+  // The lab interface permits removing a prefix, suffix, or an entire VMA.
+  if(addr != v->addr && addr + length != v->addr + v->length)
+    return -1;
+
+  for(uint64 a = addr; a < addr + length; a += PGSIZE){
+    pte_t *pte = walk(p->pagetable, a, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      continue;
+
+    if(v->flags == MAP_SHARED && (v->prot & PROT_WRITE)){
+      uint64 pa = PTE2PA(*pte);
+      uint fileoff = v->offset + (a - v->addr);
+      begin_op();
+      ilock(v->file->ip);
+      int written = writei(v->file->ip, 0, pa, fileoff, PGSIZE);
+      iunlock(v->file->ip);
+      end_op();
+      if(written != PGSIZE)
+        return -1;
+    }
+    uvmunmap(p->pagetable, a, 1, 1);
+  }
+
+  if(addr == v->addr && length == v->length){
+    fileclose(v->file);
+    memset(v, 0, sizeof(*v));
+  } else if(addr == v->addr){
+    v->addr += length;
+    v->offset += length;
+    v->length -= length;
+  } else {
+    v->length -= length;
+  }
+  return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || length <= 0)
+    return -1;
+  return vmaunmap(myproc(), addr, PGROUNDUP((uint64)length));
 }
 
 // Create the path new as a link to the same inode as old.

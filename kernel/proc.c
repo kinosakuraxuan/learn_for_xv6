@@ -119,6 +119,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  memset(p->vma, 0, sizeof(p->vma));
+  p->mmap_end = MMAPBASE;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -289,6 +291,14 @@ fork(void)
   }
   np->sz = p->sz;
 
+  np->mmap_end = p->mmap_end;
+  for(i = 0; i < NVMA; i++){
+    if(p->vma[i].used){
+      np->vma[i] = p->vma[i];
+      np->vma[i].file = filedup(p->vma[i].file);
+    }
+  }
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -343,6 +353,11 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].used)
+      vmaunmap(p, p->vma[i].addr, p->vma[i].length);
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

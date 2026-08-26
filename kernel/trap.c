@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -15,6 +19,53 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+
+static int
+mmapfault(struct proc *p, uint64 faultva, uint64 cause)
+{
+  struct vma *v = 0;
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].used && faultva >= p->vma[i].addr &&
+       faultva < p->vma[i].addr + p->vma[i].length){
+      v = &p->vma[i];
+      break;
+    }
+  }
+  if(v == 0)
+    return -1;
+  if((cause == 12 && !(v->prot & PROT_EXEC)) ||
+     (cause == 13 && !(v->prot & PROT_READ)) ||
+     (cause == 15 && !(v->prot & PROT_WRITE)))
+    return -1;
+
+  uint64 va = PGROUNDDOWN(faultva);
+  char *mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+
+  uint fileoff = v->offset + (va - v->addr);
+  ilock(v->file->ip);
+  int n = readi(v->file->ip, 0, (uint64)mem, fileoff, PGSIZE);
+  iunlock(v->file->ip);
+  if(n < 0){
+    kfree(mem);
+    return -1;
+  }
+
+  int perm = PTE_U;
+  if(v->prot & PROT_READ)
+    perm |= PTE_R;
+  if(v->prot & PROT_WRITE)
+    perm |= PTE_R | PTE_W;
+  if(v->prot & PROT_EXEC)
+    perm |= PTE_X;
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) < 0){
+    kfree(mem);
+    return -1;
+  }
+  return 0;
+}
 
 void
 trapinit(void)
@@ -65,6 +116,9 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if((r_scause() == 12 || r_scause() == 13 || r_scause() == 15) &&
+            mmapfault(p, r_stval(), r_scause()) == 0){
+    // A file-backed page was populated lazily.
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -217,4 +271,3 @@ devintr()
     return 0;
   }
 }
-
