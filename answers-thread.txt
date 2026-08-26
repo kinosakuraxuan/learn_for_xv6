@@ -1,0 +1,11 @@
+With one thread, each insertion completes before the next insertion starts, so
+the bucket head cannot be overwritten by a competing update. With two threads,
+both threads can read the same old bucket head. Each allocates a new entry whose
+next pointer refers to that old head; thread A stores its new entry in the table,
+then thread B stores its new entry in the same table slot. B's store replaces
+A's new head, so A's inserted key becomes unreachable and is reported missing.
+
+The implementation uses one mutex per hash bucket. A put holds only the mutex
+for the bucket it examines and changes, making the lookup-and-insert sequence
+atomic while still allowing operations on different buckets to proceed in
+parallel. Get uses the same bucket mutex for a consistent traversal.
