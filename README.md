@@ -27,10 +27,9 @@ make qemu
 make grade
 ```
 
-## 实验报告
+## 仓库内容
 
-- [实验一：Unix Utilities](reports/lab1.md)
-- [实验二：System Calls](reports/lab2.md)
+本分支只保留对应实验的源代码与测试脚本，实验报告不再随仓库维护。
 
 ## 上游项目
 
